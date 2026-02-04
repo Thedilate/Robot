@@ -1,0 +1,212 @@
+рабочий, но не едет
+
+#define MOTOR_A_P1 PORTD.F0    // 1A
+#define MOTOR_A_P2 PORTD.F1    // 1B
+#define MOTOR_B_P1 PORTB.F1
+#define MOTOR_B_P2 PORTB.F2
+
+char motor_duty_ = 127;
+char motor_init_ = 0;
+
+void Motor_Init() {
+    if (motor_init_ == 0) {
+        motor_init_ = 1;
+
+        ANSELH.F0 = 0;
+        ANSELH.F2 = 0;
+
+        TRISB.F1 = 0;
+        TRISB.F2 = 0;
+        TRISD.F0 = 0;
+        TRISD.F1 = 0;
+
+        PWM1_Init(5000);     // CCP1 — RC2
+        PWM2_Init(5000);     // CCP2 — RC1
+    }
+}
+
+void Change_Duty(char speed) {
+    if (speed != motor_duty_) {
+        motor_duty_ = speed;
+        PWM1_Set_Duty(speed);
+        PWM2_Set_Duty(speed);
+    }
+}
+
+void Motor_A_FWD() {
+    PWM1_Start();
+    MOTOR_A_P1 = 0;
+    MOTOR_A_P2 = 1;
+}
+
+void Motor_B_FWD() {
+    PWM2_Start();
+    MOTOR_B_P1 = 0;
+    MOTOR_B_P2 = 1;
+}
+
+void Motor_A_BWD() {
+    PWM1_Start();
+    MOTOR_A_P1 = 1;
+    MOTOR_A_P2 = 0;
+}
+
+void Motor_B_BWD() {
+    PWM2_Start();
+    MOTOR_B_P1 = 1;
+    MOTOR_B_P2 = 0;
+}
+
+void Motor_A_Off() {
+    PWM1_Stop();
+    MOTOR_A_P1 = 0;
+    MOTOR_A_P2 = 0;
+}
+
+void Motor_B_Off() {
+    PWM2_Stop();
+    MOTOR_B_P1 = 0;
+    MOTOR_B_P2 = 0;
+}
+
+void Forward(char speed) {
+    Motor_Init();
+    Change_Duty(speed);
+    Motor_A_FWD();
+    Motor_B_FWD();
+}
+
+void Backward(char speed) {
+    Motor_Init();
+    Change_Duty(speed);
+    Motor_A_BWD();
+    Motor_B_BWD();
+}
+
+void S_Left(char speed) {
+    Motor_Init();
+    Change_Duty(speed);
+    Motor_A_BWD();
+    Motor_B_FWD();
+}
+
+void S_Right(char speed) {
+    Motor_Init();
+    Change_Duty(speed);
+    Motor_A_FWD();
+    Motor_B_BWD();
+}
+
+void Motor_Stop() {
+    Motor_Init();
+    Change_Duty(0);
+    Motor_A_Off();
+    Motor_B_Off();
+}
+
+// ================================================
+// Работа с датчиком расстояния GP2D120
+
+int adc_value;
+int distance_cm;
+
+void Read_GP2D120() {
+    // Выбор канала AN2 (RA2)
+    ADCON0 = 0b11001001;     // AN2 | FRC | ADON=1
+    Delay_us(20);             // небольшая задержка после выбора канала
+    ADCON0.GO = 1;            // запуск преобразования
+    while (ADCON0.GO);        // ждём окончания
+    
+    // Чтение 10-битного значения (ADFM=1 → правое выравнивание)
+    adc_value = (ADRESH << 8) | ADRESL;
+    // или более компактно: adc_value = (ADRESH * 256) + ADRESL;
+}
+
+void Calculate_Distance() {
+    if (adc_value < 90) {
+        distance_cm = 999;         // слишком далеко → вне диапазона
+    } else {
+        // Формула из методички (примерно)
+        distance_cm = 2914 / (adc_value + 5) - 1;
+        
+        // Ограничение разумными значениями
+        if (distance_cm < 4) distance_cm = 4;
+        if (distance_cm > 40) distance_cm = 40;
+    }
+}
+
+// ================================================
+// Основная программа
+
+void main() {
+    Delay_ms(800);             // стабилизация после включения
+
+    // Настройка АЦП
+    ANSEL = 0x04;             // только AN2 = 1 (RA2 аналоговый)
+    ANSELH = 0;
+    TRISA = 0xFF;             // PORTA входы
+    
+    ADCON1 = 0b10000000;         // правое выравнивание, Vref = VDD/VSS
+    ADCON0 = 0b01000001;         // FOSC/8, канал пока не выбран, ADON=1
+
+    // Настройка выходов для фар и buzzer
+    TRISE.F0 = 0; FRONT_LIGHTS = 0;    // фары выключены
+    TRISC.F2 = 0; BUZZER     = 0;    // зуммер выключен
+
+    // Начальное движение вперёд
+    Forward(180);
+
+    bit phase = 0;     // 0 = первый подъезд, 1 = после разворота
+
+    while (1) {
+        Read_GP2D120();
+        Calculate_Distance();
+
+        // Отладка — можно закомментировать позже
+        // Lcd_Out(1,1,"Dist:");
+        // WordToStr(distance_cm, txt);
+        // Lcd_Out(1,6,txt);
+
+        if (!phase) {
+            // Фаза 1 — приближение к первому препятствию
+            if (distance_cm <= 20) {
+                FRONT_LIGHTS = 1;         // включаем фары
+            }
+
+            if (distance_cm <= 10) {
+                Motor_Stop();
+                Delay_ms(400);
+
+                // Разворот на 360° — время нужно подобрать экспериментально!
+                // Обычно 1.6–2.4 секунды в зависимости от скорости и поверхности
+                S_Left(160);
+                Delay_ms(2100);             // ← ПОДБЕРИ ЭТО ВРЕМЯ !!!
+                Motor_Stop();
+                Delay_ms(400);
+
+                Forward(180);             // продолжаем движение
+                phase = 1;                 // переходим ко второй фазе
+            }
+        }
+        else {
+            // Фаза 2 — после разворота, ждём следующее препятствие
+            if (distance_cm <= 15) {
+                Motor_Stop();
+                FRONT_LIGHTS = 0;         // можно выключить фары
+
+                // Звуковой сигнал 2 секунды
+                BUZZER = 1;
+                Delay_ms(2000);
+                BUZZER = 0;
+
+                // Конец программы — бесконечная остановка
+                while (1) {
+                    Motor_Stop();
+                    Delay_ms(500);
+                }
+            }
+        }
+
+        Delay_ms(60);     // частота опроса ~15–20 раз в секунду
+    }
+}
