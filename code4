@@ -1,9 +1,10 @@
-рабочий, но не едет
-
 #define MOTOR_A_P1 PORTD.F0    // 1A
 #define MOTOR_A_P2 PORTD.F1    // 1B
 #define MOTOR_B_P1 PORTB.F1
 #define MOTOR_B_P2 PORTB.F2
+
+#define FRONT_LIGHTS PORTE.F0  // Передние фары
+#define BUZZER PORTC.F0        // Звуковой сигнал
 
 char motor_duty_ = 127;
 char motor_init_ = 0;
@@ -150,8 +151,8 @@ void main() {
     ADCON0 = 0b01000001;         // FOSC/8, канал пока не выбран, ADON=1
 
     // Настройка выходов для фар и buzzer
-    TRISE.F0 = 0; FRONT_LIGHTS = 0;    // фары выключены
-    TRISC.F2 = 0; BUZZER     = 0;    // зуммер выключен
+    TRISE.F0 = 0; FRONT_LIGHTS = 0;   // фары выключены (RE0)
+    TRISC.F0 = 0; BUZZER       = 0;   // зуммер выключен (RC0)
 
     // Начальное движение вперёд
     Forward(180);
